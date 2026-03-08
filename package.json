@@ -1,0 +1,23 @@
+{
+  "name": "karpathy-problem",
+  "version": "1.0.0",
+  "description": "> \"Git(Hub) is *almost* but not really suited for [multi-agent collaborative research]. It has a softly built in assumption of one 'master' branch, which temporarily forks off into PRs just to merge back a bit later.\" — [@karpathy, March 2026](https://x.com/karpathy/status/2029701092347630069)",
+  "main": "engram_cli.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/terronexdev/karpathy-problem.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/terronexdev/karpathy-problem/issues"
+  },
+  "homepage": "https://github.com/terronexdev/karpathy-problem#readme",
+  "dependencies": {
+    "@terronex/engram-trace": "^0.1.1"
+  }
+}

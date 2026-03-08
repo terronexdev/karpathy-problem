@@ -1,0 +1,2 @@
+commit	val_bpb	memory_gb	status	description
+baseline-a1b2c3d	1.189370	1.9	keep	Baseline training - scaled for RTX 4070 Super

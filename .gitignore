@@ -3,3 +3,9 @@ node_modules/
 *.engram
 run.log
 __pycache__/
+results/
+*.log
+__pycache__/
+*.pyc
+node_modules/
+.karpathy-problem/
