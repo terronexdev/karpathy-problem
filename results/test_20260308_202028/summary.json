@@ -1,0 +1,22 @@
+{
+  "run_id": "test_20260308_202028",
+  "mode": "test",
+  "hours_planned": 1.0,
+  "hours_actual": 0.9378502103355196,
+  "total_iterations": 10,
+  "improvements": 1,
+  "crashes": 0,
+  "hit_rate": 0.1,
+  "baseline_bpb": 1.18937,
+  "best_bpb": 1.18854,
+  "improvement_delta": 0.0008300000000001084,
+  "final_config": {
+    "EMBEDDING_LR": 0.6,
+    "UNEMBEDDING_LR": 0.004,
+    "MATRIX_LR": 0.03,
+    "SCALAR_LR": 0.5,
+    "WEIGHT_DECAY": 0.2,
+    "WARMUP_RATIO": 0.0,
+    "WARMDOWN_RATIO": 0.5
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "run_id": "control_20260308_192617",
+  "mode": "control",
+  "hours_planned": 1.0,
+  "hours_actual": 0.901273794637786,
+  "total_iterations": 10,
+  "improvements": 1,
+  "crashes": 0,
+  "hit_rate": 0.1,
+  "baseline_bpb": 1.18937,
+  "best_bpb": 1.185426,
+  "improvement_delta": 0.0039439999999999475,
+  "final_config": {
+    "EMBEDDING_LR": 0.6,
+    "UNEMBEDDING_LR": 0.004,
+    "MATRIX_LR": 0.04,
+    "SCALAR_LR": 0.5,
+    "WEIGHT_DECAY": 0.1,
+    "WARMUP_RATIO": 0.0,
+    "WARMDOWN_RATIO": 0.5
+  }
+}
