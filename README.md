@@ -53,7 +53,26 @@ See [HYPOTHESIS.md](./HYPOTHESIS.md) and [METHOD.md](./METHOD.md) for full detai
 - **Test**: Autoresearch + Engram semantic memory
 - **Metric**: Experiments-to-improvement ratio, redundant experiment rate
 - **Hardware**: NVIDIA RTX 4070 Super (12GB VRAM)
-- **Live results**: [karpathy-problem.vercel.app](https://karpathy-problem.vercel.app) *(coming soon)*
+- **Live results**: [https://karpathy-problem-site.vercel.app](https://karpathy-problem-site.vercel.app)
+
+## Conclusion (March 10, 2026)
+
+Our hypothesis — that Engram semantic memory would provide a significant advantage for multi-agent
+collaboration in this specific hyperparameter search problem — was **not supported**.
+
+-   **Heuristic agents (R2 Control) found the best overall score:** The simplest approach (TSV + Heuristic)
+    achieved the deepest minimum (val_bpb = 1.184903). In small, bounded search spaces,
+    random exploration (even with weak heuristics) can sometimes find impactful solutions by chance.
+-   **LLM agents provided consistent exploration, but not deeper minima:** Both LLM-powered groups
+    (R3 Control & R3 Test) showed more even distributions of improvements, preventing long plateaus.
+    However, they did not surpass the best score found by the heuristic. This indicates the LLM's
+    reasoning was either too conservative or the search space too simple for complex inference.
+-   **Memory format (TSV vs. Engram) showed no significant advantage:** Across both heuristic and LLM
+    reasoning, the choice of memory format did not produce a substantial difference in the final best val_bpb.
+
+This experiment highlights that the true value of semantic memory and advanced reasoning will likely
+emerge in more complex, unstructured search spaces (e.g., code-level changes), where keyword-based search
+fundamentally breaks down. This aligns with Karpathy's own observations about code-level modifications.
 
 ## Project Structure
 
@@ -87,7 +106,7 @@ uv run train.py
 
 ## Status
 
-🔬 **Phase 1: Infrastructure** — Setting up and adapting for RTX 4070 Super
+✅ **Complete** — All experiments finished March 10, 2026. Results published at [karpathy-problem-site.vercel.app](https://karpathy-problem-site.vercel.app)
 
 ## Credits
 
