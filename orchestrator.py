@@ -36,6 +36,13 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
 
+# LLM support (Gemini Flash)
+try:
+    from google import genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
 SCRIPT_DIR = Path(__file__).parent
 TRAIN_SCRIPT = SCRIPT_DIR / "train.py"
 TRAIN_BACKUP = SCRIPT_DIR / "train.py.baseline"
@@ -141,11 +148,21 @@ class Agent:
 class MultiAgentOrchestrator:
     """Orchestrates multiple agents in interleaved rounds."""
 
-    def __init__(self, mode: str, hours: float, num_agents: int = 3):
+    def __init__(self, mode: str, hours: float, num_agents: int = 3, reasoning: str = "heuristic"):
         self.mode = mode
         self.hours = hours
         self.num_agents = num_agents
+        self.reasoning = reasoning
         self.start_time = None
+
+        # Initialize Gemini if using LLM reasoning
+        if reasoning == "llm":
+            if not GEMINI_AVAILABLE:
+                raise RuntimeError("google-genai not installed. Run: pip install google-genai")
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                raise RuntimeError("GEMINI_API_KEY not set")
+            self.gemini_client = genai.Client(api_key=api_key)
 
         # Create agents
         agent_ids = list(AGENT_STRATEGIES.keys())[:num_agents]
@@ -155,7 +172,8 @@ class MultiAgentOrchestrator:
         }
 
         # Set up results directory
-        self.run_id = f"v2_{mode}_{num_agents}agents_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        reason_tag = f"_{reasoning}" if reasoning != "heuristic" else ""
+        self.run_id = f"v3_{mode}_{num_agents}agents{reason_tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.run_dir = RESULTS_DIR / self.run_id
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,6 +215,7 @@ class MultiAgentOrchestrator:
         print(f"KARPATHY PROBLEM v2 — MULTI-AGENT EXPERIMENT")
         print(f"{'='*60}")
         print(f"Mode:     {self.mode.upper()}")
+        print(f"Reasoning: {self.reasoning.upper()}")
         print(f"Agents:   {self.num_agents}")
         for aid, agent in self.agents.items():
             print(f"  {aid}: {agent.strategy['name']} — {agent.strategy['desc']}")
@@ -292,14 +311,21 @@ class MultiAgentOrchestrator:
             self.save_summary()
 
     def propose_change(self, agent: Agent, round_num: int):
-        """Propose a hyperparameter change based on mode and agent strategy."""
-        param = agent.pick_param()
-        old_val = agent.current_config[param]
-
-        if self.mode == "test":
-            return self._propose_with_engram(agent, param, old_val, round_num)
+        """Propose a hyperparameter change based on mode, reasoning, and agent strategy."""
+        if self.reasoning == "llm":
+            # LLM picks the param AND value
+            if self.mode == "test":
+                return self._propose_with_llm_engram(agent, round_num)
+            else:
+                return self._propose_with_llm_tsv(agent, round_num)
         else:
-            return self._propose_with_tsv(agent, param, old_val, round_num)
+            # Heuristic: pick param first, then decide value
+            param = agent.pick_param()
+            old_val = agent.current_config[param]
+            if self.mode == "test":
+                return self._propose_with_engram(agent, param, old_val, round_num)
+            else:
+                return self._propose_with_tsv(agent, param, old_val, round_num)
 
     def _propose_with_tsv(self, agent: Agent, param: str, old_val, round_num: int):
         """Control: read merged TSV, grep for relevant experiments."""
@@ -434,6 +460,152 @@ class MultiAgentOrchestrator:
             return {"go_higher": None, "reasoning": "Mixed signals — exploring freely"}
         else:
             return {"go_higher": None, "reasoning": "No clear directional signal"}
+
+    # =========================================================================
+    # LLM-powered proposal methods (Round 3)
+    # =========================================================================
+
+    def _build_llm_prompt(self, agent: Agent, context_data: str, context_type: str, round_num: int):
+        """Build a prompt for the LLM agent."""
+        param_info = "\n".join(
+            f"  {k}: current={agent.current_config[k]}, range=[{v['min']}, {v['max']}], default={v['default']}"
+            for k, v in HYPERPARAMS.items()
+        )
+        return f"""You are a hyperparameter tuning agent for a GPT language model.
+Your role: {agent.strategy['name']} — {agent.strategy['desc']}
+
+TASK: Choose ONE hyperparameter to change and pick a specific new value.
+Goal: Minimize val_bpb (validation bits-per-byte). Lower = better.
+
+Current best config (val_bpb = {agent.best_bpb:.6f}):
+{param_info}
+
+Baseline val_bpb: 1.189370
+
+Here are the most relevant prior experiments ({context_type}):
+{context_data if context_data else "No prior experiments yet. Make an exploratory choice."}
+
+RULES:
+- Pick exactly ONE parameter to change
+- Stay within the allowed range
+- Consider what worked/failed for other agents
+- Your personality is {agent.strategy['name']}: {agent.strategy['desc']}
+- Round {round_num} of ~29
+
+Respond with ONLY valid JSON (no markdown, no explanation outside JSON):
+{{"param": "PARAMETER_NAME", "value": 0.xxx, "reasoning": "brief explanation"}}"""
+
+    def _call_gemini(self, prompt: str) -> dict:
+        """Call Gemini Flash and parse JSON response."""
+        try:
+            response = self.gemini_client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+            text = response.text.strip()
+            # Strip markdown code fences if present
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+                if text.startswith("json"):
+                    text = text[4:].strip()
+            return json.loads(text)
+        except Exception as e:
+            print(f"  LLM call failed: {e}")
+            return None
+
+    def _propose_with_llm_tsv(self, agent: Agent, round_num: int):
+        """Control+LLM: feed TSV rows to Gemini, get reasoned decision."""
+        # Read merged TSV
+        merged_path = self.tsv_dir / "merged.tsv"
+        context_data = ""
+        try:
+            with open(merged_path) as f:
+                reader = csv.DictReader(f, delimiter='\t')
+                rows = list(reader)
+                # Show last 15 rows (most recent context)
+                recent = rows[-15:] if len(rows) > 15 else rows
+                context_data = "\n".join(
+                    f"  {r.get('agent','?')}: {r.get('param','?')} {r.get('old','?')}→{r.get('new','?')} "
+                    f"val_bpb={r.get('val_bpb','?')} [{r.get('status','?')}]"
+                    for r in recent
+                )
+                if len(rows) > 15:
+                    context_data = f"  (showing last 15 of {len(rows)} experiments)\n" + context_data
+        except Exception:
+            pass
+
+        prompt = self._build_llm_prompt(agent, context_data, "from merged TSV / git", round_num)
+        llm_result = self._call_gemini(prompt)
+
+        reasoning = f"Round {round_num}, {agent.agent_id} ({agent.strategy['name']}): LLM+TSV\n"
+
+        if llm_result and "param" in llm_result and "value" in llm_result:
+            param = llm_result["param"]
+            if param not in HYPERPARAMS:
+                # Fallback: pick random param with random value
+                param = agent.pick_param()
+                new_val = agent.pick_value(param)
+                reasoning += f"LLM suggested invalid param '{llm_result['param']}'. Falling back to random.\n"
+            else:
+                spec = HYPERPARAMS[param]
+                new_val = max(spec["min"], min(spec["max"], float(llm_result["value"])))
+                reasoning += f"LLM reasoning: {llm_result.get('reasoning', 'none')}\n"
+        else:
+            # Fallback
+            param = agent.pick_param()
+            new_val = agent.pick_value(param)
+            reasoning += "LLM failed. Falling back to heuristic.\n"
+
+        old_val = agent.current_config[param]
+        return param, old_val, new_val, reasoning, context_data
+
+    def _propose_with_llm_engram(self, agent: Agent, round_num: int):
+        """Test+LLM: feed Engram semantic recall to Gemini, get reasoned decision."""
+        # Broader semantic query — let the LLM decide what's relevant
+        queries = [
+            "what experiments improved loss the most and what patterns emerge",
+            f"best results from all agents, especially for {agent.strategy['name'].lower()} approaches",
+            "what hyperparameter changes led to improvements vs failures",
+        ]
+        query = random.choice(queries)
+
+        recall_ctx = ""
+        try:
+            result = subprocess.run(
+                ["python3", str(SCRIPT_DIR / "research_memory.py"), "recall", query,
+                 "--limit", "8"],
+                capture_output=True, text=True, timeout=15, cwd=str(SCRIPT_DIR)
+            )
+            recall_ctx = result.stdout.strip()
+        except Exception as e:
+            recall_ctx = f"Recall failed: {e}"
+
+        prompt = self._build_llm_prompt(agent, recall_ctx, "from Engram semantic search", round_num)
+        llm_result = self._call_gemini(prompt)
+
+        reasoning = f"Round {round_num}, {agent.agent_id} ({agent.strategy['name']}): LLM+Engram\n"
+        reasoning += f"Engram query: '{query}'\n"
+
+        if llm_result and "param" in llm_result and "value" in llm_result:
+            param = llm_result["param"]
+            if param not in HYPERPARAMS:
+                param = agent.pick_param()
+                new_val = agent.pick_value(param)
+                reasoning += f"LLM suggested invalid param '{llm_result['param']}'. Falling back to random.\n"
+            else:
+                spec = HYPERPARAMS[param]
+                new_val = max(spec["min"], min(spec["max"], float(llm_result["value"])))
+                reasoning += f"LLM reasoning: {llm_result.get('reasoning', 'none')}\n"
+        else:
+            param = agent.pick_param()
+            new_val = agent.pick_value(param)
+            reasoning += "LLM failed. Falling back to heuristic.\n"
+
+        old_val = agent.current_config[param]
+        return param, old_val, new_val, reasoning, recall_ctx
 
     def merge_tsvs(self):
         """Simulate git merge: concatenate all agent TSVs into merged.tsv."""
@@ -649,9 +821,11 @@ def main():
                        help="Duration in hours (default: 8)")
     parser.add_argument("--agents", type=int, default=3,
                        help="Number of agents (default: 3)")
+    parser.add_argument("--reasoning", choices=["heuristic", "llm"], default="heuristic",
+                       help="Reasoning method: heuristic (keyword) or llm (Gemini Flash)")
     args = parser.parse_args()
 
-    orchestrator = MultiAgentOrchestrator(args.mode, args.hours, args.agents)
+    orchestrator = MultiAgentOrchestrator(args.mode, args.hours, args.agents, args.reasoning)
     orchestrator.run()
 
 
